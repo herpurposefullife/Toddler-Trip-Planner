@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { jsPDF } from "jspdf";
 
 const TRIP_TYPES = [
   { id: "flight", label: "Flying", icon: "✈️" },
@@ -36,9 +37,9 @@ function NumberField({ label, value, onChange, placeholder, prefix = "$", hint }
 export default function App() {
   const [step, setStep] = useState(1);
   const [tripType, setTripType] = useState("flight");
-  const [days, setDays] = useState(5);
-  const [toddlers, setToddlers] = useState(DEFAULT_TODDLERS);
-  const [adults, setAdults] = useState(2);
+  const [days, setDays] = useState("");
+  const [toddlers, setToddlers] = useState("");
+  const [adults, setAdults] = useState("");
 
   const [flights, setFlights] = useState(0);
   const [lodging, setLodging] = useState(0);
@@ -50,24 +51,29 @@ export default function App() {
 
   const [checklist, setChecklist] = useState({});
 
-  const toddlerExtras = useMemo(() => {
-    const diapers = toddlers * days * 3;
-    const stroller = tripType === "flight" ? 35 : 0;
-    const buffer = (flights + lodging + carRental + gas + foodPerDay * days + activities + gear) * 0.12;
-    return { diapers, stroller, buffer };
-  }, [toddlers, days, tripType, flights, lodging, carRental, gas, foodPerDay, activities, gear]);
+  // Safe numeric versions for math — inputs can be blank while typing
+  const daysNum = days === "" ? 0 : days;
+  const toddlersNum = toddlers === "" ? 0 : toddlers;
+  const adultsNum = adults === "" ? 0 : adults;
 
-  const subtotal = flights + lodging + carRental + gas + foodPerDay * days + activities + gear;
+  const toddlerExtras = useMemo(() => {
+    const diapers = toddlersNum * daysNum * 3; // $3/day estimate per toddler
+    const stroller = tripType === "flight" ? 35 : 0;
+    const buffer = (flights + lodging + carRental + gas + foodPerDay * daysNum + activities + gear) * 0.12;
+    return { diapers, stroller, buffer };
+  }, [toddlersNum, daysNum, tripType, flights, lodging, carRental, gas, foodPerDay, activities, gear]);
+
+  const subtotal = flights + lodging + carRental + gas + foodPerDay * daysNum + activities + gear;
   const toddlerTotal = toddlerExtras.diapers + toddlerExtras.stroller;
   const meltdownBuffer = toddlerExtras.buffer;
   const grandTotal = subtotal + toddlerTotal + meltdownBuffer;
-  const perDay = days > 0 ? grandTotal / days : 0;
+  const perDay = daysNum > 0 ? grandTotal / daysNum : 0;
 
   const categories = [
     { label: "Flights", value: flights, color: "#C9683D" },
     { label: "Lodging", value: lodging, color: "#8A9B8E" },
     { label: tripType === "road" ? "Car & gas" : "Car rental", value: carRental + gas, color: "#B8915C" },
-    { label: "Food", value: foodPerDay * days, color: "#D4A574" },
+    { label: "Food", value: foodPerDay * daysNum, color: "#D4A574" },
     { label: "Activities", value: activities, color: "#7A8B85" },
     { label: "Gear", value: gear, color: "#A67C5A" },
     { label: "Toddler extras", value: toddlerTotal, color: "#C9683D" },
@@ -138,36 +144,166 @@ export default function App() {
   }
 
   function downloadPlan() {
-    const lines = [];
-    lines.push("TODDLER TRIP BUDGET PLAN");
-    lines.push("=========================");
-    lines.push("");
-    lines.push(`Trip type: ${TRIP_TYPES.find((t) => t.id === tripType)?.label}`);
-    lines.push(`Duration: ${days} days`);
-    lines.push(`Travelers: ${adults} adults, ${toddlers} toddler${toddlers > 1 ? "s" : ""}`);
-    lines.push("");
-    lines.push("BUDGET BREAKDOWN");
-    lines.push("-----------------");
-    categories.forEach((c) => lines.push(`${c.label}: ${currency(c.value)}`));
-    lines.push("");
-    lines.push(`TOTAL: ${currency(grandTotal)}`);
-    lines.push(`Per day: ${currency(perDay)}`);
-    lines.push("");
-    lines.push("PACKING CHECKLIST");
-    lines.push("------------------");
-    allPackingItems.forEach((item) => lines.push(`[${checklist[item] ? "x" : " "}] ${item}`));
-    lines.push("");
-    lines.push("TIPS FOR THIS TRIP TYPE");
-    lines.push("------------------------");
-    (TIPS_BY_TYPE[tripType] || []).forEach((tip) => lines.push(`• ${tip}`));
+    const doc = new jsPDF({ unit: "pt", format: "a4" });
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const marginX = 48;
+    let y = 0;
 
-    const blob = new Blob([lines.join("\n")], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "toddler-trip-plan.txt";
-    a.click();
-    URL.revokeObjectURL(url);
+    // Brand colors
+    const forest = [45, 59, 54];
+    const terracotta = [201, 104, 61];
+    const sage = [138, 155, 142];
+    const paper = [250, 246, 240];
+    const lightLine = [232, 223, 211];
+    const grayText = [92, 105, 98];
+
+    // Header band
+    doc.setFillColor(...forest);
+    doc.rect(0, 0, pageWidth, 90, "F");
+    doc.setTextColor(...paper);
+    doc.setFont("times", "bold");
+    doc.setFontSize(22);
+    doc.text("Toddler Travel Co.", marginX, 42);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.text("small travelers deserve planners too", marginX, 60);
+
+    const tripLabel = TRIP_TYPES.find((t) => t.id === tripType)?.label || "";
+    doc.setFontSize(9);
+    doc.text(
+      `${tripLabel} trip · ${daysNum} day${daysNum === 1 ? "" : "s"} · ${adultsNum || 0} adult${(adultsNum || 0) === 1 ? "" : "s"}, ${toddlersNum} toddler${toddlersNum === 1 ? "" : "s"}`,
+      marginX,
+      78
+    );
+
+    y = 130;
+
+    // Total budget callout
+    doc.setFillColor(...lightLine);
+    doc.roundedRect(marginX, y, pageWidth - marginX * 2, 70, 8, 8, "F");
+    doc.setTextColor(...grayText);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.text("TOTAL TRIP BUDGET", marginX + 18, y + 24);
+    doc.setTextColor(...forest);
+    doc.setFont("times", "bold");
+    doc.setFontSize(28);
+    doc.text(currency(grandTotal), marginX + 18, y + 52);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.setTextColor(...grayText);
+    doc.text(`${currency(perDay)} / day`, pageWidth - marginX - 18, y + 40, { align: "right" });
+
+    y += 100;
+
+    // Budget breakdown section
+    doc.setTextColor(...forest);
+    doc.setFont("times", "bold");
+    doc.setFontSize(15);
+    doc.text("Budget breakdown", marginX, y);
+    y += 12;
+    doc.setDrawColor(...lightLine);
+    doc.line(marginX, y, pageWidth - marginX, y);
+    y += 20;
+
+    categories.forEach((c) => {
+      doc.setFillColor(...terracotta);
+      doc.circle(marginX + 4, y - 4, 3, "F");
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(11);
+      doc.setTextColor(...forest);
+      doc.text(c.label, marginX + 16, y);
+      doc.setFont("helvetica", "bold");
+      doc.text(currency(c.value), pageWidth - marginX, y, { align: "right" });
+      y += 20;
+    });
+
+    y += 10;
+
+    // Packing checklist section
+    if (y > 650) { doc.addPage(); y = 50; }
+    doc.setFont("times", "bold");
+    doc.setFontSize(15);
+    doc.setTextColor(...forest);
+    doc.text("Packing checklist", marginX, y);
+    y += 12;
+    doc.line(marginX, y, pageWidth - marginX, y);
+    y += 22;
+
+    allPackingItems.forEach((item) => {
+      if (y > 760) { doc.addPage(); y = 50; }
+      const checked = !!checklist[item];
+      doc.setDrawColor(...sage);
+      doc.setLineWidth(1);
+      doc.roundedRect(marginX, y - 9, 11, 11, 2, 2, checked ? "FD" : "D");
+      if (checked) {
+        doc.setFillColor(...sage);
+        doc.roundedRect(marginX, y - 9, 11, 11, 2, 2, "F");
+        doc.setTextColor(255, 255, 255);
+        doc.setFontSize(8);
+        doc.text("✓", marginX + 2.5, y - 0.5);
+      }
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(10.5);
+      doc.setTextColor(...forest);
+      const lines = doc.splitTextToSize(item, pageWidth - marginX * 2 - 24);
+      doc.text(lines, marginX + 20, y);
+      y += 16 * lines.length + 4;
+    });
+
+    y += 10;
+
+    // Tips section
+    if (y > 650) { doc.addPage(); y = 50; }
+    doc.setFont("times", "bold");
+    doc.setFontSize(15);
+    doc.setTextColor(...forest);
+    doc.text("Tips for your trip", marginX, y);
+    y += 12;
+    doc.line(marginX, y, pageWidth - marginX, y);
+    y += 22;
+
+    (TIPS_BY_TYPE[tripType] || []).forEach((tip) => {
+      if (y > 740) { doc.addPage(); y = 50; }
+      doc.setFillColor(...terracotta);
+      doc.rect(marginX, y - 12, 3, 30, "F");
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(10.5);
+      doc.setTextColor(...forest);
+      const lines = doc.splitTextToSize(tip, pageWidth - marginX * 2 - 16);
+      doc.text(lines, marginX + 14, y);
+      y += 16 * lines.length + 14;
+    });
+
+    // Notes page — blank lined page for the parent's own planning
+    doc.addPage();
+    let ny = 70;
+    doc.setFont("times", "bold");
+    doc.setFontSize(20);
+    doc.setTextColor(...forest);
+    doc.text("Notes", marginX, ny);
+    ny += 10;
+    doc.setDrawColor(...terracotta);
+    doc.setLineWidth(1.5);
+    doc.line(marginX, ny, marginX + 40, ny);
+    ny += 30;
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.setTextColor(...grayText);
+    doc.text("Use this page for anything that didn't fit above — confirmation numbers,", marginX, ny);
+    ny += 14;
+    doc.text("things to remember, or a reminder to yourself for next time.", marginX, ny);
+    ny += 36;
+
+    doc.setDrawColor(...lightLine);
+    doc.setLineWidth(0.75);
+    while (ny < 760) {
+      doc.line(marginX, ny, pageWidth - marginX, ny);
+      ny += 28;
+    }
+
+    doc.save("toddler-trip-plan.pdf");
   }
 
   return (
@@ -176,7 +312,7 @@ export default function App() {
 
       <header className="topbar">
         <div className="topbar-inner">
-          <span className="brand">Field&nbsp;Notes <span className="brand-sub">for small travelers</span></span>
+          <span className="brand">Toddler&nbsp;Travel&nbsp;Co. <span className="brand-sub">small travelers deserve planners too</span></span>
           <div className="progress-track">
             <div className="progress-fill" style={{ width: `${(step / 4) * 100}%` }} />
           </div>
@@ -209,8 +345,10 @@ export default function App() {
                 <input
                   type="number"
                   min="1"
+                  inputMode="numeric"
+                  placeholder="e.g. 5"
                   value={days}
-                  onChange={(e) => setDays(parseInt(e.target.value) || 1)}
+                  onChange={(e) => setDays(e.target.value === "" ? "" : parseInt(e.target.value) || "")}
                 />
               </div>
               <div className="field">
@@ -218,8 +356,10 @@ export default function App() {
                 <input
                   type="number"
                   min="1"
+                  inputMode="numeric"
+                  placeholder="e.g. 2"
                   value={adults}
-                  onChange={(e) => setAdults(parseInt(e.target.value) || 1)}
+                  onChange={(e) => setAdults(e.target.value === "" ? "" : parseInt(e.target.value) || "")}
                 />
               </div>
               <div className="field">
@@ -227,8 +367,10 @@ export default function App() {
                 <input
                   type="number"
                   min="0"
+                  inputMode="numeric"
+                  placeholder="e.g. 1"
                   value={toddlers}
-                  onChange={(e) => setToddlers(parseInt(e.target.value) || 0)}
+                  onChange={(e) => setToddlers(e.target.value === "" ? "" : parseInt(e.target.value) || "")}
                 />
               </div>
             </div>
@@ -347,7 +489,7 @@ export default function App() {
               <div className="summary-total">
                 <span className="summary-total-label">Total trip budget</span>
                 <span className="summary-total-amount">{currency(grandTotal)}</span>
-                <span className="summary-total-sub">{currency(perDay)} / day · {days} days</span>
+                <span className="summary-total-sub">{currency(perDay)} / day · {daysNum} days</span>
               </div>
               <div className="summary-bars">
                 {categories.map((c, i) => (
@@ -370,6 +512,7 @@ export default function App() {
             </ul>
 
             <button className="btn-primary btn-download" onClick={downloadPlan}>Download my full trip plan</button>
+            <p className="download-reminder">Download your plan now — it won't be saved once you leave or start a new trip.</p>
 
             <div className="btn-row">
               <button className="btn-ghost" onClick={() => setStep(3)}>← Back to packing list</button>
@@ -628,7 +771,14 @@ h1 {
   font-family: 'Inter', sans-serif;
 }
 .btn-primary:hover { background: #C9683D; }
-.btn-download { margin-bottom: 16px; }
+.btn-download { margin-bottom: 8px; }
+.download-reminder {
+  text-align: center;
+  font-size: 12px;
+  color: #8A9B8E;
+  margin: 0 0 20px;
+  line-height: 1.4;
+}
 .btn-ghost {
   background: transparent;
   color: #5C6962;
